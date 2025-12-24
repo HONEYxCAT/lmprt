@@ -1,4 +1,5 @@
 (function () {
+	"use strict";
 	var Subscribe = Lampa.Subscribe;
 
 	function RuTube(call_video) {
@@ -218,9 +219,6 @@
 		},
 		create: RuTube,
 	});
-})();
-(function () {
-	"use strict";
 
 	var proxy = "";
 	var rootuTrailerApi = Lampa.Utils.protocol() + "trailer.rootu.top/search/";
