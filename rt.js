@@ -2,8 +2,6 @@
 	var Subscribe = Lampa.Subscribe;
 
 	function RuTube(call_video) {
-		var hf_api = "https://ipavlin98-lmprt.hf.space";
-
 		var stream_url;
 		var object = $('<div class="player-video__youtube"><div class="player-video__youtube-layer"></div></div>');
 		var video = object[0];
@@ -126,7 +124,7 @@
 
 			if (!id) return Lampa.Noty.show("Rutube ID not found");
 
-			var apiUrl = hf_api + "/get_stream?video_id=" + id;
+			var apiUrl = "https://rutube.ru/api/play/options/" + id + "/?format=json&no_404=true";
 			var network = new Lampa.Reguest();
 
 			function parseM3U8AndGetBestQuality(masterUrl, callback) {
@@ -179,27 +177,21 @@
 				xhr.send();
 			}
 
-			network.silent(apiUrl, function (json) {
-				if (json && json.url) {
-					if (json.url.indexOf(".m3u8") > -1) {
-						parseM3U8AndGetBestQuality(json.url, function (bestUrl, height) {
-							html_video.attr("src", bestUrl);
-							var levels = [{ title: "Auto", quality: "Auto", selected: false }];
-							if (height > 0) {
-								levels.push({ title: height + "p", quality: height + "p", selected: true });
-							}
-							listener.send("levels", {
-								levels: levels,
-								current: height > 0 ? height + "p" : "Auto",
-							});
-						});
-					} else {
-						html_video.attr("src", json.url);
+			network.native(apiUrl, function (json) {
+				if (json && json.video_balancer && json.video_balancer.m3u8) {
+					parseM3U8AndGetBestQuality(json.video_balancer.m3u8, function (bestUrl, height) {
+						html_video.attr("src", bestUrl);
+						var levels = [{ title: "Auto", quality: "Auto", selected: false }];
+						if (height > 0) {
+							levels.push({ title: height + "p", quality: height + "p", selected: true });
+						}
 						listener.send("levels", {
-							levels: [{ title: "Auto", quality: "Auto", selected: true }],
-							current: "Auto",
+							levels: levels,
+							current: height > 0 ? height + "p" : "Auto",
 						});
-					}
+					});
+				} else {
+					Lampa.Noty.show("Rutube: video not available");
 				}
 			});
 		};
@@ -319,7 +311,7 @@
 							.filter(function (r) {
 								r._title = cleanString(r.title);
 								r._rate = -1;
-								var isTrailer = r._title.indexOf("трейлер") >= 0 || r._title.indexOf("trailer") >= 0 || r._title.indexOf("тайзер") >= 0;
+								var isTrailer = r._title.indexOf("трейлер") >= 0 || r._title.indexOf("trailer") >= 0 || r._title.indexOf("тизер") >= 0;
 								var durationOk = r.duration && r.duration < 300;
 								return !!r.embed_url && isTrailer && durationOk && !r.is_hidden && !r.is_deleted && !r.is_locked && !r.is_audio && !r.is_paid && !r.is_livestream && !r.is_adult && getRate(r) > 400;
 							})
