@@ -4,17 +4,28 @@
 
 	function RuTube(call_video) {
 		var stream_url;
-		var object = $('<div class="player-video__youtube"><div class="player-video__youtube-layer"></div></div>');
-		var video = object[0];
-		var listener = Subscribe();
+		var object, video, listener, html_video, raw_video, first_play_event, last_video_width, last_video_height, ready_sent, activeNetwork, activeXhr;
+		var outerDiv, layerDiv;
 
-		var html_video = $('<video style="width:100%;height:100%;position:absolute;top:0;left:0;" />');
+		outerDiv = document.createElement("div");
+		outerDiv.className = "player-video__youtube";
+		layerDiv = document.createElement("div");
+		layerDiv.className = "player-video__youtube-layer";
+		outerDiv.appendChild(layerDiv);
+		object = $(outerDiv);
+		video = object[0];
+		listener = Subscribe();
+
+		html_video = $('<video style="width:100%;height:100%;position:absolute;top:0;left:0;" />');
+		raw_video = html_video[0];
 		object.append(html_video);
 
-		var first_play_event = false;
-		var last_video_width = 0;
-		var last_video_height = 0;
-		var ready_sent = false;
+		first_play_event = false;
+		last_video_width = 0;
+		last_video_height = 0;
+		ready_sent = false;
+		activeNetwork = null;
+		activeXhr = null;
 
 		Object.defineProperty(video, "src", {
 			set: function (url) {
@@ -24,33 +35,33 @@
 		});
 		Object.defineProperty(video, "paused", {
 			get: function () {
-				return html_video[0].paused;
+				return raw_video ? raw_video.paused : true;
 			},
 		});
 		Object.defineProperty(video, "currentTime", {
 			set: function (t) {
 				try {
-					html_video[0].currentTime = t;
+					if (raw_video) raw_video.currentTime = t;
 				} catch (e) {}
 			},
 			get: function () {
-				return html_video[0].currentTime;
+				return raw_video ? raw_video.currentTime : 0;
 			},
 		});
 		Object.defineProperty(video, "duration", {
 			get: function () {
-				return html_video[0].duration || 0;
+				return raw_video ? raw_video.duration || 0 : 0;
 			},
 		});
 
 		Object.defineProperty(video, "videoWidth", {
 			get: function () {
-				return html_video[0].videoWidth || 0;
+				return raw_video ? raw_video.videoWidth || 0 : 0;
 			},
 		});
 		Object.defineProperty(video, "videoHeight", {
 			get: function () {
-				return html_video[0].videoHeight || 0;
+				return raw_video ? raw_video.videoHeight || 0 : 0;
 			},
 		});
 
@@ -62,7 +73,7 @@
 			listener.send("loadeddata");
 			listener.send("canplay");
 			listener.send("resize");
-			var dur = html_video[0].duration || 0;
+			var dur = raw_video ? raw_video.duration || 0 : 0;
 			if (dur > 0) listener.send("durationchange", { duration: dur });
 		}
 
@@ -73,9 +84,9 @@
 
 		html_video.on("canplay", function () {
 			onReady();
-			if (html_video[0].paused) {
-				var p = html_video[0].play();
-				if (p && p.catch) p.catch(function () {});
+			if (raw_video && raw_video.paused) {
+				var p = raw_video.play();
+				if (p && typeof p.catch === "function") p.catch(function () {});
 			}
 		});
 
@@ -95,16 +106,16 @@
 
 		html_video.on("timeupdate", function () {
 			listener.send("timeupdate");
-			if (!first_play_event && html_video[0].currentTime > 0.5) {
+			if (!first_play_event && raw_video && raw_video.currentTime > 0.5) {
 				first_play_event = true;
 				listener.send("resize");
-				var dur = html_video[0].duration || 0;
+				var dur = raw_video.duration || 0;
 				listener.send("durationchange", { duration: dur });
 				listener.send("playing");
 				listener.send("play");
 			}
-			var w = html_video[0].videoWidth || 0;
-			var h = html_video[0].videoHeight || 0;
+			var w = raw_video ? raw_video.videoWidth || 0 : 0;
+			var h = raw_video ? raw_video.videoHeight || 0 : 0;
 			if (w > 0 && h > 0 && (w !== last_video_width || h !== last_video_height)) {
 				last_video_width = w;
 				last_video_height = h;
@@ -113,7 +124,7 @@
 		});
 
 		html_video.on("error", function () {
-			var err = html_video[0].error;
+			var err = raw_video ? raw_video.error : null;
 			var msg = err ? err.message || err.code : "Unknown";
 			listener.send("error", { error: "Video Error: " + msg });
 		});
@@ -127,25 +138,29 @@
 
 			var apiUrl = "https://rutube.ru/api/play/options/" + id + "/?format=json&no_404=true";
 			var network = new Lampa.Reguest();
+			activeNetwork = network;
 
 			function parseM3U8AndGetBestQuality(masterUrl, callback) {
 				var xhr = new XMLHttpRequest();
+				var content, streams, baseUrl, lines, i, line, resMatch, bwMatch, nextLine, streamUrl, best;
+
+				activeXhr = xhr;
 				xhr.open("GET", masterUrl, true);
 				xhr.onload = function () {
 					if (xhr.status === 200) {
-						var content = xhr.responseText;
-						var lines = content.split("\n");
-						var streams = [];
-						var baseUrl = masterUrl.substring(0, masterUrl.lastIndexOf("/") + 1);
+						content = xhr.responseText;
+						streams = [];
+						baseUrl = masterUrl.substring(0, masterUrl.lastIndexOf("/") + 1);
+						lines = content.split("\n");
 
-						for (var i = 0; i < lines.length; i++) {
-							var line = lines[i].trim();
+						for (i = 0; i < lines.length; i++) {
+							line = lines[i].trim();
 							if (line.startsWith("#EXT-X-STREAM-INF:")) {
-								var resMatch = line.match(/RESOLUTION=(\d+)x(\d+)/);
-								var bwMatch = line.match(/BANDWIDTH=(\d+)/);
-								var nextLine = lines[i + 1] ? lines[i + 1].trim() : "";
+								resMatch = line.match(/RESOLUTION=(\d+)x(\d+)/);
+								bwMatch = line.match(/BANDWIDTH=(\d+)/);
+								nextLine = lines[i + 1] ? lines[i + 1].trim() : "";
 								if (nextLine && !nextLine.startsWith("#")) {
-									var streamUrl = nextLine;
+									streamUrl = nextLine;
 									if (!streamUrl.startsWith("http")) {
 										streamUrl = baseUrl + streamUrl;
 									}
@@ -159,11 +174,11 @@
 							}
 						}
 
-						if (streams.length > 0) {
+						if (streams && streams.length > 0) {
 							streams.sort(function (a, b) {
 								return (b.height || b.bandwidth) - (a.height || a.bandwidth);
 							});
-							var best = streams[0];
+							best = streams[0];
 							callback(best.url, best.height);
 						} else {
 							callback(masterUrl, 0);
@@ -198,12 +213,29 @@
 		};
 
 		video.play = function () {
-			html_video[0].play();
+			if (raw_video) {
+				var playPromise = raw_video.play();
+				if (playPromise && typeof playPromise.catch === "function") {
+					playPromise.catch(function () {});
+				}
+			}
 		};
 		video.pause = function () {
-			html_video[0].pause();
+			if (raw_video) raw_video.pause();
 		};
 		video.destroy = function () {
+			if (activeXhr) {
+				try {
+					activeXhr.abort();
+				} catch (e) {}
+				activeXhr = null;
+			}
+			if (activeNetwork) {
+				try {
+					activeNetwork.clear();
+				} catch (e) {}
+				activeNetwork = null;
+			}
 			html_video.remove();
 			object.remove();
 			listener.destroy();
@@ -223,6 +255,18 @@
 	var proxy = "";
 	var rootuTrailerApi = Lampa.Utils.protocol() + "trailer.rootu.top/search/";
 
+	var SCORE = {
+		EXACT_MATCH: 300,
+		YEAR_MATCH: 100,
+		WRONG_YEAR: -1000,
+		NO_MATCH: -2000,
+		WORD_MATCH: 100,
+		EXTRA_WORD_PENALTY: 200,
+		DURATION_BONUS: 50,
+		DURATION_PENALTY: -50,
+		MIN_RATE_THRESHOLD: 400,
+	};
+
 	function cleanString(str) {
 		return str
 			.replace(/[^a-zA-Z\dа-яА-ЯёЁ]+/g, " ")
@@ -231,20 +275,20 @@
 	}
 
 	function cacheRequest(movie, isTv, success, fail) {
-		var context = this;
 		var year = (movie.release_date || movie.first_air_date || "")
 			.toString()
 			.replace(/\D+/g, "")
 			.substring(0, 4)
 			.replace(/^([03-9]\d|1[0-8]|2[1-9]|20[3-9])\d+$/, "");
+		var si;
 		var search = movie.title || movie.name || movie.original_title || movie.original_name || "";
 		var cleanSearch = cleanString(search);
 		if (cleanSearch.length < 2) {
 			return fail();
 		}
 		var searchOrig = movie.original_title || movie.original_name || "";
-		var query = cleanString([search, year, "русский трейлер", isTv ? "сезон 1" : ""].join(" "));
-		var rutubeApiUrl = "https://rutube.ru/api/search/video/" + "?query=" + encodeURIComponent(query) + "&format=json";
+		var trailerTypes = ["трейлер", "trailer", "тизер"];
+		var trailerIndex = 0;
 		var tmdbId = movie.id ? "000000" + movie.id : "";
 		if (tmdbId.length > 7) tmdbId = tmdbId.slice(-Math.max(7, (movie.id + "").length));
 		var type = isTv ? "tv" : "movie";
@@ -255,135 +299,223 @@
 		var data = sessionStorage.getItem(key);
 
 		if (data) {
-			data = JSON.parse(data);
-			if (data[0]) typeof success === "function" && success.apply(context, [data[1]]);
-			else typeof fail === "function" && fail.apply(context, [data[1]]);
-			return;
+			try {
+				data = JSON.parse(data);
+				if (data[0]) typeof success === "function" && success(data[1]);
+				else typeof fail === "function" && fail(data[1]);
+				return function () {};
+			} catch (e) {
+				sessionStorage.removeItem(key);
+			}
 		}
 
-		function fetchFromRutubeApi() {
-			var si = Math.floor(new Date().getTime() / 1000).toString(36);
-			var network = new Lampa.Reguest();
+		function checkYearMatch(yearWords, year, cleanSearch) {
+			var i, word;
+			if (yearWords.indexOf(year) >= 0) return SCORE.YEAR_MATCH;
+			for (i = 0; i < yearWords.length; i++) {
+				word = yearWords[i];
+				if (cleanSearch.indexOf(word) < 0) return SCORE.WRONG_YEAR;
+			}
+			return 0;
+		}
+
+		function calculateWordMatch(titleWords, queryWord) {
+			var matchingWords, wordDiff, i;
+			matchingWords = titleWords.filter(function (w) {
+				return queryWord.indexOf(w) >= 0;
+			});
+			wordDiff = titleWords.length - matchingWords.length;
+			return matchingWords.length * SCORE.WORD_MATCH - wordDiff * SCORE.EXTRA_WORD_PENALTY;
+		}
+
+		function checkDuration(duration) {
+			return duration > 120 ? SCORE.DURATION_BONUS : SCORE.DURATION_PENALTY;
+		}
+
+		function getRate(r, cleanSearch, year, queryWord) {
+			var rate = 0;
+			var titleWords, searchIndex, otherWords, yearWords, i;
+
+			titleWords = r._title.split(" ");
+			searchIndex = r._title.indexOf(cleanSearch);
+
+			if (searchIndex >= 0) {
+				rate += SCORE.EXACT_MATCH;
+
+				if (year) {
+					otherWords = r._title
+						.substring(searchIndex + cleanSearch.length)
+						.trim()
+						.split(" ");
+					if (otherWords.length && otherWords[0] !== year && /^(\d+|[ivx]+)$/.test(otherWords[0])) {
+						rate += SCORE.WRONG_YEAR;
+					}
+
+					yearWords = titleWords.filter(function (w) {
+						return w.length === 4 && /^([03-9]\d|1[0-8]|2[1-9]|20[3-9])\d+$/.test(w);
+					});
+
+					rate += checkYearMatch(yearWords, year, cleanSearch);
+				}
+			} else {
+				rate = SCORE.NO_MATCH;
+			}
+
+			rate += calculateWordMatch(titleWords, queryWord);
+			rate += checkDuration(r.duration);
+
+			return rate;
+		}
+
+		var activeRequests = [];
+
+		function cancelAllRequests() {
+			var i;
+			for (i = 0; i < activeRequests.length; i++) {
+				try {
+					if (activeRequests[i]) activeRequests[i].clear();
+				} catch (e) {}
+			}
+			activeRequests = [];
+		}
+
+		function handleSearchFail(data) {
+			sessionStorage.setItem(key, JSON.stringify([false, data || {}, search]));
+			typeof fail === "function" && fail(data || {});
+		}
+
+		function handleSearchSuccess(results) {
+			sessionStorage.setItem(key, JSON.stringify([true, results, search]));
+			typeof success === "function" && success(results);
+		}
+
+		function processSearchResults(data, query) {
+			var queryWord, origWords, i, results, simplifiedResults, postNetwork;
+
+			queryWord = query.split(" ");
+			if (searchOrig !== "" && search !== searchOrig) {
+				origWords = cleanString(searchOrig).split(" ");
+				for (i = 0; i < origWords.length; i++) {
+					queryWord.push(origWords[i]);
+				}
+			}
+			si += "=" + (Lampa.Utils.hash(si + id) * 1).toString(36);
+			queryWord.push(isTv ? "сериал" : "фильм", "4k", "fullhd", "ultrahd", "ultra", "hd", "1080p");
+
+			results = data.results.filter(function (r) {
+				var isTrailer, durationOk;
+				r._title = cleanString(r.title);
+				isTrailer = r._title.indexOf("трейлер") >= 0 || r._title.indexOf("trailer") >= 0 || r._title.indexOf("тизер") >= 0 || r._title.indexOf("teaser") >= 0;
+				durationOk = r.duration && r.duration < 600;
+				if (!r.embed_url || !isTrailer || !durationOk || r.is_hidden || r.is_deleted || r.is_locked || r.is_audio || r.is_paid || r.is_livestream || r.is_adult) return false;
+				r._rate = getRate(r, cleanSearch, year, queryWord);
+				return r._rate > SCORE.MIN_RATE_THRESHOLD;
+			});
+
+			if (results && results.length > 0) {
+				results.sort(function (a, b) {
+					return b._rate - a._rate;
+				});
+				handleSearchSuccess(results);
+
+				if (tmdbId && /^\d+$/.test(tmdbId)) {
+					simplifiedResults = results.map(function (r) {
+						return {
+							title: r.title,
+							url: r.video_url || r.embed_url,
+							thumbnail_url: r.thumbnail_url,
+							duration: r.duration,
+							author: r.author,
+						};
+					});
+					postNetwork = new Lampa.Reguest();
+					activeRequests.push(postNetwork);
+					postNetwork.quiet(
+						rootuTrailersUrl + "?" + si,
+						function () {
+							postNetwork.clear();
+						},
+						function () {
+							postNetwork.clear();
+						},
+						JSON.stringify(simplifiedResults),
+					);
+				}
+			}
+			return results;
+		}
+
+		function executeSearch(index) {
+			var trailerType, query, rutubeApiUrl, network;
+
+			if (index >= trailerTypes.length) {
+				handleSearchFail({});
+				return;
+			}
+
+			trailerType = trailerTypes[index];
+			query = cleanString([search, year, trailerType, isTv ? "сезон 1" : ""].join(" "));
+			rutubeApiUrl = "https://rutube.ru/api/search/video/" + "?query=" + encodeURIComponent(query) + "&format=json";
+			si = Math.floor(new Date().getTime() / 1000).toString(36);
+			network = new Lampa.Reguest();
+			activeRequests.push(network);
+
 			network.native(
 				proxy + rutubeApiUrl,
 				function (data) {
-					var results = [];
-					if (!!data && !!data.results && !!data.results[0]) {
-						var queryWord = query.split(" ");
-						if (searchOrig !== "" && search !== searchOrig) queryWord.push.apply(queryWord, cleanString(searchOrig).split(" "));
-						si += "=" + (Lampa.Utils.hash(si + id) * 1).toString(36);
-						queryWord.push(isTv ? "сериал" : "фильм", "русском", "финальный", "4k", "fullhd", "ultrahd", "ultra", "hd", "1080p");
-						var getRate = function (r) {
-							if (r._rate === -1) {
-								r._rate = 0;
-								var si = r._title.indexOf(cleanSearch);
-								var rw = r._title.split(" ");
-								if (si >= 0) {
-									r._rate += 300;
-									if (year) {
-										var ow = r._title
-											.substring(si + cleanSearch.length)
-											.trim()
-											.split(" ");
-										if (ow.length && ow[0] !== year && /^(\d+|[ivx]+)$/.test(ow[0])) r._rate = -1000;
-										ow = rw.filter(function (w) {
-											return w.length === 4 && /^([03-9]\d|1[0-8]|2[1-9]|20[3-9])\d+$/.test(w);
-										});
-										if (ow.indexOf(year) >= 0) r._rate += 100;
-										else for (si in ow) if (cleanSearch.indexOf(ow[si]) < 0) r._rate = -1000;
-									}
-								} else {
-									r._rate = -2000;
-								}
-								var rf = rw.filter(function (w) {
-									return queryWord.indexOf(w) >= 0;
-								});
-								var wordDiff = rw.length - rf.length;
-								r._rate += rf.length * 100;
-								r._rate -= wordDiff * 200;
-								r._rate += r.duration > 120 ? 50 : -50;
-							}
-							return r._rate;
-						};
-						results = data.results
-							.filter(function (r) {
-								r._title = cleanString(r.title);
-								r._rate = -1;
-								var isTrailer = r._title.indexOf("трейлер") >= 0 || r._title.indexOf("trailer") >= 0 || r._title.indexOf("тизер") >= 0;
-								var durationOk = r.duration && r.duration < 300;
-								return !!r.embed_url && isTrailer && durationOk && !r.is_hidden && !r.is_deleted && !r.is_locked && !r.is_audio && !r.is_paid && !r.is_livestream && !r.is_adult && getRate(r) > 400;
-							})
-							.sort(function (a, b) {
-								return getRate(b) - getRate(a);
-							});
+					var results;
+					if (!data || !data.results || !data.results[0]) {
+						network.clear();
+						executeSearch(index + 1);
+						return;
 					}
 
-					if (results.length) {
-						sessionStorage.setItem(key, JSON.stringify([true, results, search]));
-						typeof success === "function" && success.apply(context, [results]);
-
-						if (tmdbId && /^\d+$/.test(tmdbId)) {
-							var simplifiedResults = results.map(function (r) {
-								return {
-									title: r.title,
-									url: r.video_url || r.embed_url,
-									thumbnail_url: r.thumbnail_url,
-									duration: r.duration,
-									author: r.author,
-								};
-							});
-							var postNetwork = new Lampa.Reguest();
-							postNetwork.quiet(
-								rootuTrailersUrl + "?" + si,
-								function () {
-									postNetwork.clear();
-								},
-								function () {
-									postNetwork.clear();
-								},
-								JSON.stringify(simplifiedResults),
-							);
-						}
-					} else {
-						sessionStorage.setItem(key, JSON.stringify([false, {}, search]));
-						typeof fail === "function" && fail.apply(context, [{}]);
+					results = processSearchResults(data, query);
+					if (!results || !results.length) {
+						network.clear();
+						executeSearch(index + 1);
+						return;
 					}
+
 					network.clear();
-					network = null;
 				},
 				function (data) {
 					if (!proxy && !window.AndroidJS && !!data && "status" in data && "readyState" in data && data.status === 0 && data.readyState === 0) {
 						proxy = Lampa.Storage.get("rutube_search_proxy", "") || "https://rutube-search.root-1a7.workers.dev/";
 						if (proxy.substr(-1) !== "/") proxy += "/";
-						if (proxy === "/") {
-							sessionStorage.setItem(key, JSON.stringify([false, {}, search]));
-							typeof fail === "function" && fail.apply(context, [{}]);
-						} else {
-							fetchFromRutubeApi();
+						if (proxy !== "/") {
+							network.clear();
+							executeSearch(index);
+							return;
 						}
-					} else {
-						sessionStorage.setItem(key, JSON.stringify([false, data, search]));
-						typeof fail === "function" && fail.apply(context, [data]);
 					}
+					handleSearchFail(data);
 					network.clear();
-					network = null;
 				},
 			);
 		}
 
+		function fetchFromRutubeApi() {
+			cancelAllRequests();
+			executeSearch(0);
+		}
+
 		if (!tmdbId || /\D/.test(tmdbId)) {
 			fetchFromRutubeApi();
-			return;
+			return function abort() {
+				cancelAllRequests();
+			};
 		}
 
 		var rootuTopNetwork = new Lampa.Reguest();
+		activeRequests.push(rootuTopNetwork);
 		rootuTopNetwork.timeout(2000);
 		rootuTopNetwork.native(
 			rootuTrailersUrl,
 			function (rootuTrailerData) {
 				if (rootuTrailerData && rootuTrailerData.length) {
 					sessionStorage.setItem(key, JSON.stringify([true, rootuTrailerData, search]));
-					typeof success === "function" && success.apply(context, [rootuTrailerData]);
+					typeof success === "function" && success(rootuTrailerData);
 				} else {
 					fetchFromRutubeApi();
 				}
@@ -396,23 +528,53 @@
 				rootuTopNetwork = null;
 			},
 		);
+
+		return function abort() {
+			cancelAllRequests();
+		};
+	}
+
+	var loadTrailersActiveRequests = [];
+
+	function cancelLoadTrailers() {
+		var i;
+		for (i = 0; i < loadTrailersActiveRequests.length; i++) {
+			try {
+				if (loadTrailersActiveRequests[i]) loadTrailersActiveRequests[i]();
+			} catch (e) {}
+		}
+		loadTrailersActiveRequests = [];
 	}
 
 	function loadTrailers(event, success, fail) {
+		var movie, isTv, title, searchOk, abortFn;
+
 		if (!event.object || !event.object.source || !event.data || !event.data.movie) return;
-		var movie = event.data.movie;
-		var isTv = !!event.object && !!event.object.method && event.object.method === "tv";
-		var title = movie.title || movie.name || movie.original_title || movie.original_name || "";
+
+		cancelLoadTrailers();
+
+		movie = event.data.movie;
+		isTv = !!event.object && !!event.object.method && event.object.method === "tv";
+		title = movie.title || movie.name || movie.original_title || movie.original_name || "";
 		if (title === "") return;
-		var searchOk = function (data) {
-			if (!!data[0]) {
+
+		searchOk = function (data) {
+			if (data && data[0]) {
 				success(data);
 			} else {
 				fail();
 			}
 		};
-		cacheRequest(movie, isTv, searchOk, fail);
+
+		abortFn = cacheRequest(movie, isTv, searchOk, fail);
+		if (typeof abortFn === "function") {
+			loadTrailersActiveRequests.push(abortFn);
+		}
 	}
+
+	Lampa.Player.listener.follow("destroy", function () {
+		cancelLoadTrailers();
+	});
 
 	Lampa.Lang.add({
 		rutube_trailer_trailer: {
